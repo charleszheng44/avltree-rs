@@ -16,38 +16,62 @@ struct Node<T: Ord, U> {
     val: U,
 }
 
-impl<T: Ord + fmt::Display, U: fmt::Display + PartialEq> std::fmt::Display for AVLTree<T, U> {
-    /// fmt displays the tree by level
+macro_rules! new_node {
+    ($key:expr, $val:expr) => {
+        Node {
+            key: $key,
+            val: $val,
+            left: None,
+            right: None,
+        }
+    };
+}
+
+impl<T: Ord + fmt::Display, U: PartialEq> fmt::Display for Node<T, U> {
+    /// fmt displays the node by level
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fn print_level<T: Ord + fmt::Display, U: fmt::Display>(
+        fn print_level<T: Ord + fmt::Display, U>(
             f: &mut fmt::Formatter<'_>,
-            root: &TreeNode<T, U>,
+            node: &Node<T, U>,
             level: u8,
         ) -> fmt::Result {
-            if root.is_none() {
-                return Ok(());
-            }
-
-            let root_ref = root.as_deref().unwrap();
-
             if level == 0 {
-                return write!(f, "[{}:{}] ", root_ref.key, root_ref.val);
+                return write!(f, "{}", node.key);
             }
 
-            print_level(f, &root_ref.left, level - 1)?;
-            print_level(f, &root_ref.right, level - 1)
+            if node.left.is_some() {
+                print_level(f, node.left.as_deref().unwrap(), level - 1)?;
+            }
+
+            if node.right.is_some() {
+                print_level(f, node.right.as_deref().unwrap(), level - 1)?;
+            }
+
+            Ok(())
         }
 
-        // print tree by level
-        let height = self.height();
+        // print node by level
+        let height = node_height(Some(self));
         for l in 0..height {
-            print_level(f, &self.root, l);
+            print_level(f, &self, l);
             write!(f, "\n")?;
         }
         Ok(())
     }
 }
 
+impl<T: Ord + fmt::Display, U: PartialEq> fmt::Display for AVLTree<T, U> {
+    /// fmt displays the tree by level
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.root.is_none() {
+            return write!(f, "");
+        }
+        write!(f, "{}", self.root.as_deref().unwrap())
+    }
+}
+
+/// node_height returns the height of the node, the height of a node without
+/// any decendent is 1.
 fn node_height<T: Ord, U>(opt_node: Option<&Node<T, U>>) -> u8 {
     match opt_node {
         None => 0,
@@ -60,7 +84,11 @@ fn node_height<T: Ord, U>(opt_node: Option<&Node<T, U>>) -> u8 {
     }
 }
 
-impl<T: Ord, U> Node<T, U> {
+impl<T, U> Node<T, U>
+where
+    T: Ord + fmt::Display + Copy + fmt::Debug + Default,
+    U: PartialEq,
+{
     fn left_rotate(&mut self) {
         //  1. cut off the right tree
         //    x                    x
@@ -95,35 +123,40 @@ impl<T: Ord, U> Node<T, U> {
         self.left = right;
 
         // 5. set the old right-left tree as the left-right tree
-        self.left.as_deref_mut().unwrap().left = right_left;
+        //    y                          y
+        //   / \                        / \
+        //  x  T3 + T2 ------------>   x  T3
+        //  /                         / \
+        // T1                        T1 T2
+        self.left.as_deref_mut().unwrap().right = right_left;
     }
 
     fn right_rotate(&mut self) {
         // 1. cut off the left tree
-        //       y                        y
-        //      / \                       \
-        //     x  T3  ------------>  x  + T3
-        //    / \                    / \
-        //   T1 T2                  T1 T2
+        //     y                         y
+        //    / \                        \
+        //   x  T3  ------------>   x  + T3
+        //  / \                    / \
+        // T1 T2                  T1 T2
         let mut left = self.left.take();
 
         // 2. cut off the left-right tree
-        //         y                       y
-        //         \                       \
-        //    x  + T3  ------------>  x  + T3
-        //   / \                     /
-        //  T1 T2                   T1 T2
+        //        y                       y
+        //        \                       \
+        //   x  + T3  ------------>  x  + T3
+        //  / \                     /
+        // T1 T2                   T1 T2
         let left_right = left.as_deref_mut().unwrap().right.take();
 
         // 3. use the left as the new root and replace it with the old root
         mem::swap(left.as_deref_mut().unwrap(), self);
 
         // 4. set the left-right tree as the left tree of the node
-        //         y                      x
-        //         \                     / \
-        //    x  + T3  ------------>    T1  y + T2
-        //   /                              \
-        //  T1 T2                           T3
+        //        y                      x
+        //        \                     / \
+        //   x  + T3  ------------>    T1  y + T2
+        //  /                              \
+        // T1 T2                           T3
         self.right = left;
 
         // 5. set the old left-right as the current right's left
@@ -164,9 +197,59 @@ impl<T: Ord, U> Node<T, U> {
         self.right_rotate();
         self.left_rotate()
     }
+
+    /// pretty_print prints the node and its decendents in a human-readable way
+    /// e.g.,
+    ///       1
+    ///      / \                     [["","","","1","","",""],
+    ///     2   3 ----------------->  ["","2","","","","3",""],
+    ///      \                        ["","","4","","","",""]]
+    ///       4
+    /// this function is for testing
+    pub fn pretty_print(&self, indent: u8) {
+        fn gen_level_nodes_vec<T, U>(
+            node: &Node<T, U>,
+            level: usize,
+            left: usize,
+            right: usize,
+            oup: &mut Vec<Vec<T>>,
+        ) where
+            T: Ord + fmt::Display + Copy + fmt::Debug,
+            U: PartialEq,
+        {
+            let mid = (left + right) / 2;
+            oup[level][mid] = node.key;
+
+            if node.left.is_some() {
+                gen_level_nodes_vec(node.left.as_deref().unwrap(), level + 1, left, mid - 1, oup);
+            }
+
+            if node.right.is_some() {
+                gen_level_nodes_vec(
+                    node.right.as_deref().unwrap(),
+                    level + 1,
+                    mid + 1,
+                    right,
+                    oup,
+                );
+            }
+        }
+
+        let height = node_height(Some(self)) as u32;
+        let width = 2_u32.pow(height) - 1;
+        let mut oup: Vec<Vec<T>> = vec![vec![Default::default(); width as usize]; height as usize];
+        gen_level_nodes_vec(self, 0, 0, (width - 1) as usize, &mut oup);
+        for l in oup {
+            println!("{:?}", l);
+        }
+    }
 }
 
-fn rebalance<T: Ord, U>(parents: Vec<*mut Node<T, U>>) {
+fn rebalance<T, U>(parents: Vec<*mut Node<T, U>>)
+where
+    T: Ord + fmt::Display + Copy + fmt::Debug + Default,
+    U: PartialEq,
+{
     // iterate all ancestors in a bottom up manner
     for p in parents {
         let mut balance_factor: i16;
@@ -186,7 +269,11 @@ fn rebalance<T: Ord, U>(parents: Vec<*mut Node<T, U>>) {
     }
 }
 
-impl<T: Ord, U: PartialEq> AVLTree<T, U> {
+impl<T, U> AVLTree<T, U>
+where
+    T: Ord + fmt::Display + Copy + fmt::Debug + Default,
+    U: PartialEq,
+{
     /// peek returns the reference of the root.
     pub fn peek(&self) -> Option<(&T, &U)> {
         if self.root.is_none() {
@@ -295,6 +382,7 @@ impl<T: Ord, U: PartialEq> AVLTree<T, U> {
 #[cfg(test)]
 mod tests {
     use super::AVLTree;
+    use super::Node;
 
     #[test]
     fn into_vec() {
@@ -316,4 +404,43 @@ mod tests {
         ];
         assert_eq!(v1, v2);
     }
+
+    #[test]
+    fn left_rotate() {
+        let node = &mut Node {
+            key: "x",
+            val: "",
+            left: Some(Box::new(Node {
+                key: "T1",
+                val: "",
+                left: None,
+                right: None,
+            })),
+            right: Some(Box::new(Node {
+                key: "y",
+                val: "",
+                left: Some(Box::new(Node {
+                    key: "T2",
+                    val: "",
+                    left: None,
+                    right: None,
+                })),
+                right: Some(Box::new(Node {
+                    key: "T3",
+                    val: "",
+                    left: None,
+                    right: None,
+                })),
+            })),
+        };
+        println!("before rotate");
+        println!("{}", node);
+        node.left_rotate();
+        println!("after rotate");
+        println!("{}", node);
+        node.pretty_print(0);
+    }
+
+    #[test]
+    fn right_rotate() {}
 }
