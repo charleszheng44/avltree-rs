@@ -2,6 +2,8 @@
 use std::cmp::{self, Ordering};
 use std::fmt;
 use std::mem;
+use std::ptr;
+use std::rc::Rc;
 
 struct AVLTree<T: Ord, U> {
     root: TreeNode<T, U>,
@@ -245,12 +247,13 @@ where
     }
 }
 
-fn rebalance<T, U>(parents: Vec<*mut Node<T, U>>)
+/// rebalance_all_parents iterate all parents and rebalance all unbalanced ancestors.
+fn rebalance_all_parents<T, U>(parents: Vec<*mut Node<T, U>>)
 where
     T: Ord + fmt::Display + Copy + fmt::Debug + Default,
     U: PartialEq,
 {
-    // iterate all ancestors in a bottom up manner
+    // check ancestors in a bottom up manner
     for p in parents {
         let mut balance_factor: i16;
         let node: &mut Node<T, U>;
@@ -259,6 +262,35 @@ where
                 - node_height((*p).right.as_deref()) as i16;
             node = &mut *p;
         }
+        // rebalance the first unbalance ancestor and return
+        if balance_factor > 1 {
+            node.left_balance();
+            continue;
+        }
+
+        if balance_factor < -1 {
+            node.right_balance();
+            continue;
+        }
+    }
+}
+
+/// rebalance iterate all parents and rebalance the first unabalnced ancestors.
+fn rebalance<T, U>(parents: Vec<*mut Node<T, U>>)
+where
+    T: Ord + fmt::Display + Copy + fmt::Debug + Default,
+    U: PartialEq,
+{
+    // check ancestors in a bottom up manner
+    for p in parents {
+        let mut balance_factor: i16;
+        let node: &mut Node<T, U>;
+        unsafe {
+            balance_factor = node_height((*p).left.as_deref()) as i16
+                - node_height((*p).right.as_deref()) as i16;
+            node = &mut *p;
+        }
+        // rebalance the first unbalance ancestor and return
         if balance_factor > 1 {
             node.left_balance()
         }
@@ -374,9 +406,65 @@ where
     }
 
     /// delete removes the tree node with the given T.
-    pub fn delete(&mut self, key: T) {
-        todo!()
+    pub fn delete(&mut self, key: T) -> Result<U, &'static str> {
+        let mut parents = vec![];
+        let ret = delete(&mut self.root, key, &mut parents);
+        rebalance_all_parents(parents);
+        ret
     }
+}
+
+fn delete<T: Ord, U>(
+    opt_node: &mut Option<Box<Node<T, U>>>,
+    key: T,
+    mut parents: &mut Vec<*mut Node<T, U>>,
+) -> Result<U, &'static str> {
+    if opt_node.is_none() {
+        return Err("");
+    }
+
+    let node = opt_node.as_deref_mut().unwrap();
+
+    if node.key > key {
+        parents.push(node as *mut Node<T, U>);
+        return delete(&mut node.left, key, parents);
+    }
+
+    if node.key < key {
+        parents.push(node as *mut Node<T, U>);
+        return delete(&mut node.left, key, parents);
+    }
+
+    /// node only has the right subtree
+    if node.left.is_none() && node.right.is_some() {
+        let right = node.right.take();
+        return Ok(opt_node.replace(right.unwrap()).unwrap().val);
+    }
+
+    /// node only has the left subtree
+    if node.left.is_some() && node.right.is_none() {
+        let left = node.left.take();
+        return Ok(opt_node.replace(left.unwrap()).unwrap().val);
+    }
+
+    /// node has both left and right subtrees
+    if node.left.is_some() && node.right.is_some() {
+        // get the inorder decendent
+        let decendent = get_min(opt_node);
+        return Ok(opt_node.replace(decendent.unwrap()).unwrap().val);
+    }
+
+    /// node is the leaf
+    Ok(opt_node.take().unwrap().val)
+}
+
+/// get_min returns consume the minimum child node and return it.
+fn get_min<T: Ord, U>(node: &mut Option<Box<Node<T, U>>>) -> Option<Box<Node<T, U>>> {
+    let mut cur = node;
+    while let Some(node) = cur {
+        cur = &mut node.left;
+    }
+    cur.take()
 }
 
 #[cfg(test)]
@@ -440,7 +528,4 @@ mod tests {
         println!("{}", node);
         node.pretty_print(0);
     }
-
-    #[test]
-    fn right_rotate() {}
 }
